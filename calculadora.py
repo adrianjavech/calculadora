@@ -1106,11 +1106,11 @@ elif menu == "📜 Registro de Uso":
 
         with open(ARCHIVO_LOG, "rb") as f:
             st.download_button(
-                "📥 Descargar registro (CSV)",
-                data=f.read(),
-                file_name="registro_uso.csv",
-                mime="text/csv",
-            )
+            "📥 Descargar registro (CSV)",
+            data=df_log.to_csv(index=False).encode("utf-8-sig"),
+            file_name="registro_uso.csv",
+            mime="text/csv",
+        )
 
 # Footer
 st.markdown("---")
