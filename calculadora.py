@@ -4,8 +4,11 @@ import streamlit as st
 import unicodedata
 import base64
 import os
+import uuid
 from datetime import datetime
 import numpy as np
+
+from registro_log import registrar_evento, leer_log, ARCHIVO_LOG
 
 # ==================== CONFIGURACIÓN DE LA PÁGINA ====================
 
@@ -38,6 +41,16 @@ if 'distrito_cliente' not in st.session_state:
 
 if 'sexo_cliente' not in st.session_state:
     st.session_state.sexo_cliente = "Masculino"
+
+# --- Variables para el registro (LOG) ---
+if 'sesion_id' not in st.session_state:
+    st.session_state.sesion_id = str(uuid.uuid4())[:8]
+
+if 'ultima_cotizacion_registrada' not in st.session_state:
+    st.session_state.ultima_cotizacion_registrada = None
+
+if 'ultimo_menu' not in st.session_state:
+    st.session_state.ultimo_menu = None
 
 # ==================== FUNCIONES AUXILIARES ====================
 
@@ -332,8 +345,14 @@ df_campanas = cargar_campanas()
 
 menu = st.sidebar.radio(
     "📋 Menú Principal",
-    ["🎯 Recomendador de Plan", "💰 Calculadora de Tarifas", "📊 Campañas Vigentes", "📚 Recursos"]
+    ["🎯 Recomendador de Plan", "💰 Calculadora de Tarifas", "📊 Campañas Vigentes", "📚 Recursos", "📜 Registro de Uso"]
 )
+
+# Registrar ingreso a la calculadora (solo al entrar, no en cada interacción)
+if menu != st.session_state.ultimo_menu:
+    if menu == "💰 Calculadora de Tarifas":
+        registrar_evento("Ingreso a calculadora", st.session_state.sesion_id)
+    st.session_state.ultimo_menu = menu
 
 # ==================== MÓDULO 1: RECOMENDADOR DE PLAN ====================
 
@@ -425,6 +444,13 @@ if menu == "🎯 Recomendador de Plan":
             # Guardar en session_state
             st.session_state.plan_recomendado = plan
             st.session_state.recomendacion_generada = True
+
+            # REGISTRO (LOG): recomendación generada
+            registrar_evento(
+                "Recomendación generada", st.session_state.sesion_id,
+                plan=plan, continuidad=tiene_continuidad, num_asegurados=Numero_dependientes,
+                edades=str(Edad), detalle=f"{Sexo}, {Distrito_display}"
+            )
             
             # Obtener planes alternativos válidos
             segunda_opcion, tercera_opcion = obtener_planes_alternativos(plan, Edad, tiene_continuidad)
@@ -737,6 +763,29 @@ elif menu == "💰 Calculadora de Tarifas":
             cuota_mensual = calcular_pago_financiado(total_prima, tasa_interes, num_cuotas)
             total_financiado = cuota_mensual * num_cuotas
             costo_financiamiento = total_financiado - total_prima
+
+            # REGISTRO (LOG): cotización calculada
+            # Solo se registra cuando la cotización cambia (Streamlit re-ejecuta el código en cada clic)
+            firma = (
+                plan_seleccionado,
+                tuple((a['relacion'], a['edad']) for a in asegurados),
+                num_cuotas,
+                tasa_interes,
+                st.session_state.tiene_continuidad,
+            )
+            if firma != st.session_state.ultima_cotizacion_registrada:
+                registrar_evento(
+                    "Cotización calculada", st.session_state.sesion_id,
+                    plan=plan_seleccionado,
+                    continuidad=st.session_state.tiene_continuidad,
+                    num_asegurados=len(asegurados),
+                    edades=", ".join(f"{a['relacion']}:{a['edad']}" for a in asegurados),
+                    prima_total=round(total_prima, 2),
+                    num_cuotas=num_cuotas,
+                    financiamiento=tipo_financiamiento,
+                    cuota_mensual=round(cuota_mensual, 2),
+                )
+                st.session_state.ultima_cotizacion_registrada = firma
             
             # Mostrar métricas
             col1, col2, col3, col4 = st.columns(4)
@@ -797,10 +846,18 @@ elif menu == "💰 Calculadora de Tarifas":
             
             with col1:
                 if st.button("📥 Descargar Propuesta en PDF", type="primary"):
+                    registrar_evento(
+                        "Descarga PDF solicitada", st.session_state.sesion_id,
+                        plan=plan_seleccionado, prima_total=round(total_prima, 2)
+                    )
                     st.info("🚧 Funcionalidad en desarrollo. Próximamente podrás descargar la propuesta en formato PDF.")
             
             with col2:
                 if st.button("📧 Enviar por Email"):
+                    registrar_evento(
+                        "Envío email solicitado", st.session_state.sesion_id,
+                        plan=plan_seleccionado, prima_total=round(total_prima, 2)
+                    )
                     st.info("🚧 Funcionalidad en desarrollo. Próximamente podrás enviar la propuesta por correo.")
 
 # ==================== MÓDULO 3: CAMPAÑAS VIGENTES ====================
@@ -1025,6 +1082,36 @@ elif menu == "📚 Recursos":
         - ✅ Mayor flexibilidad en la selección
         """)
 
+# ==================== MÓDULO 5: REGISTRO DE USO (LOG) ====================
+
+elif menu == "📜 Registro de Uso":
+    st.header("📜 Registro de Uso")
+
+    df_log = leer_log()
+
+    if df_log.empty:
+        st.info("Aún no hay registros.")
+    else:
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total de eventos", len(df_log))
+        col2.metric("Cotizaciones calculadas", int((df_log['evento'] == "Cotización calculada").sum()))
+        col3.metric("Sesiones distintas", df_log['sesion_id'].nunique())
+
+        eventos = st.multiselect("Filtrar por evento", sorted(df_log['evento'].unique()))
+        if eventos:
+            df_log = df_log[df_log['evento'].isin(eventos)]
+
+        # Más recientes primero
+        st.dataframe(df_log.iloc[::-1], use_container_width=True)
+
+        with open(ARCHIVO_LOG, "rb") as f:
+            st.download_button(
+                "📥 Descargar registro (CSV)",
+                data=f.read(),
+                file_name="registro_uso.csv",
+                mime="text/csv",
+            )
+
 # Footer
 st.markdown("---")
 st.markdown(
@@ -1036,6 +1123,3 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
-# rebuild trigger
-
-
