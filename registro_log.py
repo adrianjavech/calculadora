@@ -9,6 +9,7 @@ ARCHIVO_LOG = "registro_uso.csv"
 COLUMNAS = [
     "fecha_hora",
     "sesion_id",
+    "usuario",
     "evento",
     "plan",
     "continuidad",
@@ -22,11 +23,12 @@ COLUMNAS = [
 ]
 
 
-def registrar_evento(evento, sesion_id="", **datos):
+def registrar_evento(evento, sesion_id="", usuario="", **datos):
     fila = {c: "" for c in COLUMNAS}
     fila.update({k: v for k, v in datos.items() if k in COLUMNAS})
     fila["fecha_hora"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     fila["sesion_id"] = sesion_id
+    fila["usuario"] = usuario
     fila["evento"] = evento
     try:
         requests.post(WEBHOOK_URL, json=fila, timeout=5)
